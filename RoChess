@@ -1,11 +1,12 @@
 --[[
-    @XevrynXen  •  ROCHESS + VE COMPANION
+    @XevrynXen  •  ROCHESS
     UI: @XevrynXen v2 shell
-    Backend: Vortex Bot, Chess API, Auto-Play, VE Enemy Predictor
+    Backend: Vortex Bot, Chess API, Auto-Play, Configs
+    (UI based on Don't Splash, Backend by yua)
 ]]
 
 local Players           = game:GetService("Players")
-local Workspace         = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
 local TweenService      = game:GetService("TweenService")
 local UIS               = game:GetService("UserInputService")
@@ -13,7 +14,6 @@ local Lighting          = game:GetService("Lighting")
 local SoundService      = game:GetService("SoundService")
 local Debris            = game:GetService("Debris")
 local HttpService       = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LP = Players.LocalPlayer
 local playerGui = LP:WaitForChild("PlayerGui")
@@ -25,18 +25,12 @@ end
 local LOGO = "rbxassetid://107391174248131"
 
 ----------------------------------------------------------------------
--- DEPENDENCIES
+-- GAME MODULES
 ----------------------------------------------------------------------
 local chess = ReplicatedStorage:WaitForChild("Chess", 15)
-local ChessClient = ReplicatedStorage:WaitForChild("ChessClient", 15)
-if not chess or not ChessClient then
-    return warn("RoChess modules not found")
-end
-
+if not chess then error("ReplicatedStorage.Chess wasn't found") end
 local engine = require(chess:WaitForChild("Engine"))
 local bot = require(chess:WaitForChild("Bot"))
-local VortexBot = require(chess:WaitForChild("VortexBot"))
-local App = require(ChessClient:WaitForChild("App"))
 
 ----------------------------------------------------------------------
 -- THEME
@@ -50,8 +44,37 @@ local C = {
     purple=Color3.fromRGB(165,92,255), blue=Color3.fromRGB(72,145,255),
     green=Color3.fromRGB(72,220,145), text=Color3.fromRGB(245,245,248),
     muted=Color3.fromRGB(155,158,168),
-    enemy=Color3.fromRGB(235, 92, 92)
 }
+
+----------------------------------------------------------------------
+-- SFX
+----------------------------------------------------------------------
+local PING="rbxasset://sounds/electronicpingshort.wav"
+local CLICK="rbxasset://sounds/clickfast.wav"
+local WHOOSH="rbxasset://sounds/swordslash.wav"
+local BOOM="rbxasset://sounds/impact_explosion_03.mp3"
+local SFX={
+    select={{id=CLICK,speed=1.1,vol=0.7}},
+    hover={{id=CLICK,speed=1.8,vol=0.1}},
+    on={{id=PING,speed=1.2,vol=0.55},{id=PING,speed=1.7,vol=0.55,delay=0.09}},
+    off={{id=PING,speed=0.8,vol=0.55},{id=PING,speed=0.55,vol=0.55,delay=0.09}},
+    open={{id=WHOOSH,speed=1.3,vol=0.5},{id=PING,speed=1.5,vol=0.4,delay=0.12}},
+    close={{id=WHOOSH,speed=0.85,vol=0.4}},
+    whoosh={{id=WHOOSH,speed=1.0,vol=0.7}},
+    boom={{id=BOOM,speed=0.9,vol=0.8}},
+}
+local function sfx(name)
+    local list=SFX[name]; if not list then return end
+    for _,s in ipairs(list) do
+        task.delay(s.delay or 0, function()
+            local snd=Instance.new("Sound")
+            snd.SoundId=s.id; snd.Volume=s.vol or 0.5
+            snd.PlaybackSpeed=s.speed or 1
+            snd.Parent=SoundService; snd:Play()
+            Debris:AddItem(snd,3)
+        end)
+    end
+end
 
 ----------------------------------------------------------------------
 -- HELPERS
@@ -143,7 +166,7 @@ local function makeLogo(parent,radius,props)
 end
 
 ----------------------------------------------------------------------
--- STATE & CONFIG
+-- STATE & CONFIG (YUA'S STATE)
 ----------------------------------------------------------------------
 local config_dir = "configs_yse"
 local meta_file = "bestconfig.json"
@@ -154,60 +177,13 @@ local promotion_types = { q = 5, r = 4, b = 3, n = 2 }
 local state = {
     autoPlay = false, model = "vortex bot", playDelay = 0.35, depth = 12,
     autoPlayChoice = "first best", showBest = false, showSecond = false,
-    autoloadConfig = false, currentConfig = "",
-    controller = nil, lastScan = 0, scanError = nil,
-    workerRunning = false, destroyed = false,
+    autoloadConfig = false, currentConfig = "", controller = nil,
+    lastScan = 0, scanError = nil, workerRunning = false, destroyed = false,
     analysisBusy = false, analysisStartedAt = 0, analysisToken = 0,
     currentSession = nil, lastAutoFen = nil, lastFailFen = nil,
     best = nil, secondBest = nil
 }
 
--- VE Chess State
-local VE = {}
-VE.config = {
-    EnemyView = true,
-    AutoPlay = false,
-    Humanise = true,
-    MoveDelay = 3.5,
-    ThinkTime = 1.5,
-}
-VE.state = {
-    status = "idle", enemyLine1 = "", enemyLine2 = "", enemyLine3 = "",
-    lastError = nil, plan = nil, decision = nil, prediction = nil,
-}
-
-local function ensureDir()
-    if type(makefolder) == "function" and type(isfolder) == "function" then
-        if not isfolder(config_dir) then makefolder(config_dir) end
-    end
-end
-
-local function saveConfig(name, data)
-    ensureDir()
-    if type(writefile) ~= "function" then return false end
-    writefile(config_dir .. "/" .. name .. ".json", HttpService:JSONEncode(data))
-    return true
-end
-
-local function saveMeta()
-    if type(writefile) ~= "function" then return end
-    writefile(meta_file, HttpService:JSONEncode({ autoloadConfig = state.autoloadConfig, currentConfig = state.currentConfig }))
-end
-
-local function getCurrentConfigData()
-    return {
-        autoPlay = state.autoPlay, model = state.model, playDelay = state.playDelay,
-        depth = state.depth, autoPlayChoice = state.autoPlayChoice,
-        showBest = state.showBest, showSecond = state.showSecond,
-        VE = VE.config
-    }
-end
-
--- Load meta omitted for brevity, handled standardly
-
-----------------------------------------------------------------------
--- GUI SETUP
-----------------------------------------------------------------------
 local Flags = {}
 local Changed = Instance.new("BindableEvent")
 
@@ -226,19 +202,40 @@ end
 -- NOTIFICATIONS
 ----------------------------------------------------------------------
 local notifHolder=new("Frame",{
-    AnchorPoint=Vector2.new(1,1), Position=UDim2.new(1,-16,1,-16),
-    Size=UDim2.new(0,260,0,320), BackgroundTransparency=1,
+    AnchorPoint=Vector2.new(1,1),
+    Position=UDim2.new(1,-16,1,-16),
+    Size=UDim2.new(0,260,0,320),
+    BackgroundTransparency=1,
 },gui)
-new("UIListLayout",{VerticalAlignment=Enum.VerticalAlignment.Bottom,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)},notifHolder)
+new("UIListLayout",{
+    VerticalAlignment=Enum.VerticalAlignment.Bottom,
+    SortOrder=Enum.SortOrder.LayoutOrder,
+    Padding=UDim.new(0,6),
+},notifHolder)
 
 local function notify(text,color)
     color=color or C.accent
     local wrap=new("Frame",{Size=UDim2.new(1,0,0,40),BackgroundTransparency=1},notifHolder)
-    local card=new("Frame",{Size=UDim2.new(1,0,1,0),Position=UDim2.new(0,290,0,0),BackgroundColor3=C.panel,BorderSizePixel=0},wrap)
+    local card=new("Frame",{
+        Size=UDim2.new(1,0,1,0),
+        Position=UDim2.new(0,290,0,0),
+        BackgroundColor3=C.panel, BorderSizePixel=0,
+    },wrap)
     corner(card,8); stroke(card,color,1,0.5)
-    new("Frame",{Position=UDim2.new(0,7,0,7),Size=UDim2.new(0,3,1,-14),BackgroundColor3=color,BorderSizePixel=0},card)
-    label(card,{Text=text,Font=Enum.Font.GothamBold,Position=UDim2.new(0,20,0,0),Size=UDim2.new(1,-28,1,0),TextXAlignment=Enum.TextXAlignment.Left})
-    local prog=new("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,0,1,0),Size=UDim2.new(1,0,0,2),BackgroundColor3=color,BorderSizePixel=0},card)
+    new("Frame",{
+        Position=UDim2.new(0,7,0,7),
+        Size=UDim2.new(0,3,1,-14),
+        BackgroundColor3=color, BorderSizePixel=0,
+    },card)
+    label(card,{
+        Text=text, Font=Enum.Font.GothamBold,
+        Position=UDim2.new(0,20,0,0), Size=UDim2.new(1,-28,1,0),
+        TextXAlignment=Enum.TextXAlignment.Left,
+    })
+    local prog=new("Frame",{
+        AnchorPoint=Vector2.new(0,1), Position=UDim2.new(0,0,1,0),
+        Size=UDim2.new(1,0,0,2), BackgroundColor3=color, BorderSizePixel=0,
+    },card)
     tween(card,0.45,{Position=UDim2.new(0,0,0,0)},Enum.EasingStyle.Back)
     tween(prog,2.2,{Size=UDim2.new(0,0,0,2)},Enum.EasingStyle.Linear)
     task.delay(2.2,function()
@@ -253,64 +250,184 @@ local function fire(id,value,silent)
 end
 
 ----------------------------------------------------------------------
--- CONFIG (UI Layout)
+-- CONFIG SAVE/LOAD
+----------------------------------------------------------------------
+local function ensureDir()
+    if type(makefolder) == "function" and type(isfolder) == "function" then
+        if not isfolder(config_dir) then makefolder(config_dir) end
+    end
+end
+
+local function listConfigs()
+    ensureDir()
+    local list = {}
+    if type(listfiles) == "function" then
+        local files = listfiles(config_dir)
+        if type(files) == "table" then
+            for _, f in ipairs(files) do
+                local name = string.match(f, "[^/\\]+$")
+                if name then
+                    name = string.match(name, "^(.+)%.json$")
+                    if name and name ~= "" then table.insert(list, name) end
+                end
+            end
+        end
+    end
+    table.sort(list); return list
+end
+
+local function saveConfig(name, data)
+    ensureDir()
+    if type(writefile) ~= "function" then return false end
+    writefile(config_dir .. "/" .. name .. ".json", HttpService:JSONEncode(data))
+    return true
+end
+
+local function loadConfig(name)
+    if type(isfile) ~= "function" or type(readfile) ~= "function" then return nil end
+    local path = config_dir .. "/" .. name .. ".json"
+    if not isfile(path) then return nil end
+    local content = readfile(path)
+    if type(content) ~= "string" then return nil end
+    local okDec, data = pcall(function() return HttpService:JSONDecode(content) end)
+    if not okDec or type(data) ~= "table" then return nil end
+    return data
+end
+
+local function deleteConfig(name)
+    if type(delfile) == "function" then delfile(config_dir .. "/" .. name .. ".json") end
+end
+
+local function saveMeta()
+    if type(writefile) ~= "function" then return end
+    writefile(meta_file, HttpService:JSONEncode({ autoloadConfig = state.autoloadConfig, currentConfig = state.currentConfig }))
+end
+
+local function loadMeta()
+    if type(isfile) ~= "function" or type(readfile) ~= "function" then return end
+    if not isfile(meta_file) then return end
+    local content = readfile(meta_file)
+    if type(content) ~= "string" then return end
+    local okDec, data = pcall(function() return HttpService:JSONDecode(content) end)
+    if not okDec or type(data) ~= "table" then return end
+    if type(data.autoloadConfig) == "boolean" then state.autoloadConfig = data.autoloadConfig end
+    if type(data.currentConfig) == "string" then state.currentConfig = data.currentConfig end
+end
+
+local function applyConfigData(data)
+    if type(data) ~= "table" then return end
+    if type(data.autoPlay) == "boolean" then state.autoPlay = data.autoPlay end
+    if type(data.model) == "string" then state.model = data.model:lower() end
+    if type(data.autoPlayChoice) == "string" then state.autoPlayChoice = data.autoPlayChoice:lower() end
+    if type(data.playDelay) == "number" then state.playDelay = math.clamp(data.playDelay, 0.1, 2) end
+    if type(data.depth) == "number" then state.depth = math.clamp(math.floor(data.depth), 4, 24) end
+    if type(data.showBest) == "boolean" then state.showBest = data.showBest end
+    if type(data.showSecond) == "boolean" then state.showSecond = data.showSecond end
+end
+
+local function getCurrentConfigData()
+    return {
+        autoPlay = state.autoPlay, model = state.model, playDelay = state.playDelay,
+        depth = state.depth, autoPlayChoice = state.autoPlayChoice,
+        showBest = state.showBest, showSecond = state.showSecond
+    }
+end
+
+loadMeta()
+if state.autoloadConfig and state.currentConfig ~= "" then
+    local data = loadConfig(state.currentConfig)
+    if data then applyConfigData(data) end
+end
+state.model = state.model:lower()
+if state.model == "lichess" then state.model = "chess api" end
+
+----------------------------------------------------------------------
+-- CONFIG
 ----------------------------------------------------------------------
 local function T(id,title,def) return {type="toggle",id=id,title=title,default=def or false} end
 local function S(id,title,min,max,def,dec) return {type="slider",id=id,title=title,min=min,max=max,default=def,decimals=dec or 0} end
 local function B(id,title) return {type="button",id=id,title=title} end
+local function D(id,title,options,def) return {type="dropdown",id=id,title=title,options=options,default=def} end
+local function TB(id,title,placeholder) return {type="textbox",id=id,title=title,placeholder=placeholder} end
 local function G(name,side,controls) return {name=name,side=side,controls=controls} end
-local function L(id,text) return {type="label",id=id,text=text} end
 
 local CONFIG = {
     {
         name="Engine", icon="♟",
         groups={
             G("Auto Play","left",{
-                T("AutoPlay","Auto Move (Main)", state.autoPlay),
-                T("ShowBest","Show Best Move", state.showBest),
-                S("PlayDelay","Move Delay",0.1,2, state.playDelay, 2),
+                T("AutoPlay","Auto Move", state.autoPlay),
+                T("ShowBest","Show Best Arrow", state.showBest),
+                T("ShowSecond","Show 2nd Arrow", state.showSecond),
+                D("AutoPlayChoice","Play Choice", {"first best","second best"}, state.autoPlayChoice),
+                S("PlayDelay","Move Delay",0.1,2, state.playDelay),
+                S("Depth","Think Depth",4,24, state.depth),
             }),
-            G("Engine Options","right",{
-                S("Depth","Thinking Depth",4,24, state.depth),
-                B("SaveConfig","Save Current Config"),
+            G("Model","right",{
+                D("Model","Engine Model", {"vortex bot","chess api"}, state.model),
             }),
         },
     },
     {
-        name="VE Companion", icon="🛡",
+        name="Configs", icon="💾",
         groups={
-            G("Enemy View","left",{
-                T("VE_EnemyView","Show Enemy Plan", VE.config.EnemyView),
-                T("VE_Humanise","Humanise Timing", VE.config.Humanise),
-                S("VE_MoveDelay","VE Move Delay",0.5,10, VE.config.MoveDelay, 1),
-                S("VE_ThinkTime","VE Think Time",0.5,6, VE.config.ThinkTime, 1),
+            G("Config Manager","left",{
+                TB("ConfigName","Name","Enter config name"),
+                B("CreateConfig","Create Config"),
+                B("OverwriteConfig","Overwrite Config"),
+                B("DeleteConfig","Delete Config"),
+                T("AutoloadConfig","Autoload Config", state.autoloadConfig),
             }),
-            G("Live Status","right",{
-                L("EnemyLine1","Target: ---"),
-                L("EnemyLine2","Last Move: ---"),
-                L("EnemyLine3","Prediction: ---"),
-                L("VE_Status","Status: ---"),
+            G("Load Config","right",{
+                D("ChooseConfig","Select", listConfigs(), state.currentConfig),
             }),
         },
     },
 }
 
 ----------------------------------------------------------------------
--- CONTROL BUILDERS (Standard Shell)
+-- CONTROL BUILDERS
 ----------------------------------------------------------------------
 local function ripple(row,relX)
-    local r=new("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(relX,0,0.5,0),Size=UDim2.new(0,0,0,0),BackgroundColor3=C.accent,BackgroundTransparency=0.55,BorderSizePixel=0,ZIndex=0},row)
-    corner(r,200); tween(r,0.55,{Size=UDim2.new(0,170,0,170),BackgroundTransparency=1}); task.delay(0.6,function() r:Destroy() end)
+    local r=new("Frame",{
+        AnchorPoint=Vector2.new(0.5,0.5),
+        Position=UDim2.new(relX,0,0.5,0),
+        Size=UDim2.new(0,0,0,0),
+        BackgroundColor3=C.accent, BackgroundTransparency=0.55,
+        BorderSizePixel=0, ZIndex=0,
+    },row)
+    corner(r,200)
+    tween(r,0.55,{Size=UDim2.new(0,170,0,170), BackgroundTransparency=1})
+    task.delay(0.6,function() r:Destroy() end)
 end
 
 local function makeToggle(parent,ctrl,order)
-    local row=new("TextButton",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C.hover,BackgroundTransparency=1,AutoButtonColor=false,Text="",ClipsDescendants=true,LayoutOrder=order},parent)
+    local row=new("TextButton",{
+        Size=UDim2.new(1,0,0,34),
+        BackgroundColor3=C.hover, BackgroundTransparency=1,
+        AutoButtonColor=false, Text="", ClipsDescendants=true,
+        LayoutOrder=order,
+    },parent)
     corner(row,8)
-    local hbar=new("Frame",{AnchorPoint=Vector2.new(0,0.5),Position=UDim2.new(0,0,0.5,0),Size=UDim2.new(0,3,0,0),BackgroundColor3=C.accent,BorderSizePixel=0},row)
-    local name=label(row,{Text=ctrl.title,Position=UDim2.new(0,10,0,0),Size=UDim2.new(1,-60,1,0),TextXAlignment=Enum.TextXAlignment.Left})
-    local sw=new("Frame",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-8,0.5,0),Size=UDim2.new(0,38,0,20),BackgroundColor3=C.line,BorderSizePixel=0},row)
-    corner(sw,10); local swStroke=stroke(sw,C.accent,2,1)
-    local knob=new("Frame",{AnchorPoint=Vector2.new(0,0.5),Position=UDim2.new(0,3,0.5,0),Size=UDim2.new(0,14,0,14),BackgroundColor3=C.text,BorderSizePixel=0},sw)
+    local hbar=new("Frame",{
+        AnchorPoint=Vector2.new(0,0.5), Position=UDim2.new(0,0,0.5,0),
+        Size=UDim2.new(0,3,0,0), BackgroundColor3=C.accent, BorderSizePixel=0,
+    },row)
+    local name=label(row,{
+        Text=ctrl.title, Position=UDim2.new(0,10,0,0),
+        Size=UDim2.new(1,-60,1,0),
+        TextXAlignment=Enum.TextXAlignment.Left,
+    })
+    local sw=new("Frame",{
+        AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,-8,0.5,0),
+        Size=UDim2.new(0,38,0,20), BackgroundColor3=C.line, BorderSizePixel=0,
+    },row)
+    corner(sw,10)
+    local swStroke=stroke(sw,C.accent,2,1)
+    local knob=new("Frame",{
+        AnchorPoint=Vector2.new(0,0.5), Position=UDim2.new(0,3,0.5,0),
+        Size=UDim2.new(0,14,0,14), BackgroundColor3=C.text, BorderSizePixel=0,
+    },sw)
     corner(knob,7)
     local function set(v,silent)
         tween(sw,0.25,{BackgroundColor3=v and C.accent or C.line})
@@ -318,14 +435,28 @@ local function makeToggle(parent,ctrl,order)
         tween(knob,0.32,{Position=UDim2.new(0,v and 21 or 3,0.5,0)},Enum.EasingStyle.Back)
         tween(name,0.2,{TextColor3=v and C.text or C.muted})
         fire(ctrl.id,v,silent)
+        if not silent then sfx(v and "on" or "off") end
     end
-    row.MouseEnter:Connect(function() tween(row,0.15,{BackgroundTransparency=0.45}); tween(hbar,0.2,{Size=UDim2.new(0,3,0,16)}) end)
-    row.MouseLeave:Connect(function() tween(row,0.15,{BackgroundTransparency=1}); tween(hbar,0.2,{Size=UDim2.new(0,3,0,0)}) end)
-    row.Activated:Connect(function(input)
-        local relX=0.85; if input and input.Position then relX=math.clamp((input.Position.X-row.AbsolutePosition.X)/row.AbsoluteSize.X,0,1) end
-        ripple(row,relX); set(not Flags[ctrl.id])
+    row.MouseEnter:Connect(function()
+        tween(row,0.15,{BackgroundTransparency=0.45})
+        tween(hbar,0.2,{Size=UDim2.new(0,3,0,16)})
+        sfx("hover")
     end)
-    set(ctrl.default,true); name.TextColor3=ctrl.default and C.text or C.muted
+    row.MouseLeave:Connect(function()
+        tween(row,0.15,{BackgroundTransparency=1})
+        tween(hbar,0.2,{Size=UDim2.new(0,3,0,0)})
+    end)
+    row.Activated:Connect(function(input)
+        local relX=0.85
+        if input and input.Position then
+            relX=math.clamp((input.Position.X-row.AbsolutePosition.X)/row.AbsoluteSize.X,0,1)
+        end
+        ripple(row,relX)
+        set(not Flags[ctrl.id])
+    end)
+    set(ctrl.default,true)
+    name.TextColor3=ctrl.default and C.text or C.muted
+    return {Set=set}
 end
 
 local function makeSlider(parent,ctrl,order)
@@ -349,65 +480,197 @@ local function makeSlider(parent,ctrl,order)
     local dragging=false
     hit.InputBegan:Connect(function(i)
         if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
-            dragging=true; tween(knob,0.18,{Size=UDim2.new(0,19,0,19)},Enum.EasingStyle.Back); tween(knobStroke,0.18,{Transparency=0.3})
+            dragging=true; sfx("select")
+            tween(knob,0.18,{Size=UDim2.new(0,19,0,19)},Enum.EasingStyle.Back); tween(knobStroke,0.18,{Transparency=0.3})
             fromX(i.Position.X)
             i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dragging=false; tween(knob,0.18,{Size=UDim2.new(0,14,0,14)}); tween(knobStroke,0.18,{Transparency=1}) end end)
         end
     end)
     UIS.InputChanged:Connect(function(i) if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then fromX(i.Position.X) end end)
     setValue(ctrl.default,true)
+    return {Set=setValue}
 end
 
 local function makeButton(parent,ctrl,order)
     local b=new("TextButton",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C.panel2,AutoButtonColor=false,Text=ctrl.title,Font=Enum.Font.GothamBold,TextColor3=C.text,TextSize=13,BorderSizePixel=0,LayoutOrder=order},parent)
     corner(b,8); stroke(b,C.line,1,0.5)
-    b.Activated:Connect(function() fire(ctrl.id,true) end)
+    b.MouseEnter:Connect(function() tween(b,0.15,{BackgroundColor3=C.hover}); sfx("hover") end)
+    b.MouseLeave:Connect(function() tween(b,0.15,{BackgroundColor3=C.panel2}) end)
+    b.Activated:Connect(function() sfx("select"); fire(ctrl.id,true) end)
 end
 
-local textRefs = {}
-local function makeLabel(parent,ctrl,order)
-    local l = label(parent,{
-        Text = ctrl.text, Position = UDim2.new(0, 10, 0, 0), 
-        Size = UDim2.new(1, -20, 0, 34), TextXAlignment = Enum.TextXAlignment.Left,
-        TextSize = 11, TextColor3 = C.muted, LayoutOrder = order, TextWrapped = true
-    })
-    textRefs[ctrl.id] = l
+local function makeDropdown(parent,ctrl,order)
+    local b=new("TextButton",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C.panel2,AutoButtonColor=false,Text=ctrl.title..": "..tostring(ctrl.default),Font=Enum.Font.GothamBold,TextColor3=C.text,TextSize=13,BorderSizePixel=0,LayoutOrder=order},parent)
+    corner(b,8); stroke(b,C.line,1,0.5)
+    local idx = 1
+    for i,v in ipairs(ctrl.options) do if v==ctrl.default then idx=i break end end
+    b.MouseEnter:Connect(function() tween(b,0.15,{BackgroundColor3=C.hover}); sfx("hover") end)
+    b.MouseLeave:Connect(function() tween(b,0.15,{BackgroundColor3=C.panel2}) end)
+    b.Activated:Connect(function()
+        sfx("select")
+        idx = idx + 1; if idx > #ctrl.options then idx = 1 end
+        b.Text = ctrl.title..": "..tostring(ctrl.options[idx])
+        fire(ctrl.id, ctrl.options[idx])
+    end)
 end
 
-local builders={toggle=makeToggle,slider=makeSlider,button=makeButton,label=makeLabel}
+local function makeTextbox(parent,ctrl,order)
+    local b=new("TextBox",{Size=UDim2.new(1,0,0,34),BackgroundColor3=C.panel2,Text=ctrl.placeholder,PlaceholderText=ctrl.placeholder,Font=Enum.Font.GothamBold,TextColor3=C.text,TextSize=13,BorderSizePixel=0,LayoutOrder=order},parent)
+    corner(b,8); stroke(b,C.line,1,0.5)
+    b.FocusLost:Connect(function() fire(ctrl.id, b.Text) end)
+end
+
+local builders={toggle=makeToggle,slider=makeSlider,button=makeButton,dropdown=makeDropdown,textbox=makeTextbox}
 
 ----------------------------------------------------------------------
--- WINDOW SETUP
+-- DRAGGABLE
+----------------------------------------------------------------------
+local function makeDraggable(handle,target,opts)
+    opts=opts or {}
+    local drag={active=false}
+    local goal,cur=Vector2.zero,Vector2.zero
+    local startPos,startAbs
+    handle.InputBegan:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+            drag.active=true; drag.input=i; drag.start=i.Position; drag.moved=0
+            startPos=target.Position; startAbs=target.AbsolutePosition
+            goal,cur=Vector2.zero,Vector2.zero
+            i.Changed:Connect(function()
+                if i.UserInputState==Enum.UserInputState.End then
+                    drag.active=false
+                    if opts.onTap and drag.moved<8 then opts.onTap() end
+                end
+            end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if not drag.active then return end
+        local isMine=i==drag.input
+            or (i.UserInputType==Enum.UserInputType.MouseMovement and drag.input.UserInputType==Enum.UserInputType.MouseButton1)
+        if not isMine then return end
+        local d=Vector2.new(i.Position.X-drag.start.X,i.Position.Y-drag.start.Y)
+        drag.moved=math.max(drag.moved,d.Magnitude)
+        local vp,sz=gui.AbsoluteSize,target.AbsoluteSize
+        local minX,maxX,minY,maxY
+        if opts.full then
+            minX,maxX=6-startAbs.X,vp.X-sz.X-6-startAbs.X
+            minY,maxY=6-startAbs.Y,vp.Y-sz.Y-6-startAbs.Y
+        else
+            minX,maxX=140-startAbs.X-sz.X,vp.X-140-startAbs.X
+            minY,maxY=-startAbs.Y,vp.Y-56-startAbs.Y
+        end
+        goal=Vector2.new(math.clamp(d.X,minX,maxX),math.clamp(d.Y,minY,maxY))
+    end)
+    RunService.RenderStepped:Connect(function(dt)
+        if not startPos or (not drag.active and (cur-goal).Magnitude<0.05) then return end
+        cur=cur:Lerp(goal,1-math.exp(-dt*26))
+        target.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+cur.X,
+            startPos.Y.Scale,startPos.Y.Offset+cur.Y)
+    end)
+end
+
+----------------------------------------------------------------------
+-- WINDOW
 ----------------------------------------------------------------------
 local win=new("CanvasGroup",{
-    Name="Window", AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0.5,0),
-    Size=UDim2.new(0,720,0,450), BackgroundColor3=C.bg, BorderSizePixel=0,
+    Name="Window",
+    AnchorPoint=Vector2.new(0.5,0.5),
+    Position=UDim2.new(0.5,0,0.5,0),
+    Size=UDim2.new(0,720,0,450),
+    BackgroundColor3=C.bg, BorderSizePixel=0,
     Visible=false, GroupTransparency=1,
 },gui)
-corner(win,14); spin(accentGradient(stroke(win,WHITE,1.5)),50)
+corner(win,14)
+spin(accentGradient(stroke(win,WHITE,1.5)),50)
 local winScale=new("UIScale",{Scale=1},win)
 
 local top=new("Frame",{Size=UDim2.new(1,0,0,48),BackgroundColor3=C.panel,BorderSizePixel=0},win)
-local topLine=new("Frame",{AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,0,1,0),Size=UDim2.new(1,0,0,1),BackgroundColor3=WHITE,BorderSizePixel=0},top)
+local topLine=new("Frame",{
+    AnchorPoint=Vector2.new(0,1), Position=UDim2.new(0,0,1,0),
+    Size=UDim2.new(1,0,0,1), BackgroundColor3=WHITE, BorderSizePixel=0,
+},top)
 spin(accentGradient(topLine),120)
 
 local uiLogo=makeLogo(top,8,{Position=UDim2.new(0,12,0,9),Size=UDim2.new(0,30,0,30)})
 stroke(uiLogo,C.accent,1,0.3)
-local pill=new("Frame",{AnchorPoint=Vector2.new(0,0.5),Position=UDim2.new(0,52,0.5,0),Size=UDim2.new(0,88,0,20),BackgroundColor3=C.panel2,BorderSizePixel=0},top)
-corner(pill,10); stroke(pill,C.line,1)
-label(pill,{Text="ROCHESS",Font=Enum.Font.GothamBold,TextSize=10,TextColor3=C.muted,Size=UDim2.new(1,0,1,0)})
+local uiLogoShine=makeShine(uiLogo,12,60,3)
+task.spawn(function()
+    while uiLogo.Parent do
+        uiLogoShine.Position=UDim2.new(1.3,0,0.5,0)
+        tween(uiLogoShine,0.7,{Position=UDim2.new(-0.3,0,0.5,0)},Enum.EasingStyle.Sine,Enum.EasingDirection.InOut)
+        task.wait(3)
+    end
+end)
 
-local title=label(top,{Text="@XevrynXen",Font=Enum.Font.Michroma,TextSize=22,AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.5,0),Size=UDim2.new(0,170,1,0)})
+local pill=new("Frame",{
+    AnchorPoint=Vector2.new(0,0.5), Position=UDim2.new(0,52,0.5,0),
+    Size=UDim2.new(0,88,0,20), BackgroundColor3=C.panel2, BorderSizePixel=0,
+},top)
+corner(pill,10); stroke(pill,C.line,1)
+label(pill,{Text="ROCHESS",Font=Enum.Font.GothamBold,TextSize=10,TextColor3=C.muted,
+    Size=UDim2.new(1,0,1,0)})
+
+local live=new("Frame",{
+    AnchorPoint=Vector2.new(0,0.5), Position=UDim2.new(0,148,0.5,0),
+    Size=UDim2.new(0,8,0,8), BackgroundColor3=C.green, BorderSizePixel=0,
+},top)
+corner(live,4)
+task.spawn(function()
+    while live.Parent do
+        tween(live,0.9,{BackgroundTransparency=0.7},Enum.EasingStyle.Sine)
+        task.wait(0.9)
+        tween(live,0.9,{BackgroundTransparency=0},Enum.EasingStyle.Sine)
+        task.wait(0.9)
+    end
+end)
+
+local title=label(top,{
+    Text="@XevrynXen", Font=Enum.Font.Michroma, TextSize=22,
+    AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0.5,0),
+    Size=UDim2.new(0,170,1,0),
+})
 shineText(title,2.0)
 
-local closeBtn=new("TextButton",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-12,0.5,0),Size=UDim2.new(0,28,0,28),BackgroundColor3=C.panel2,Text="—",Font=Enum.Font.GothamBold,TextSize=14,TextColor3=C.muted,AutoButtonColor=false,BorderSizePixel=0},top)
+local closeBtn=new("TextButton",{
+    AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,-12,0.5,0),
+    Size=UDim2.new(0,28,0,28), BackgroundColor3=C.panel2,
+    Text="—", Font=Enum.Font.GothamBold, TextSize=14,
+    TextColor3=C.muted, AutoButtonColor=false, BorderSizePixel=0,
+},top)
 corner(closeBtn,8)
+closeBtn.MouseEnter:Connect(function()
+    tween(closeBtn,0.15,{BackgroundColor3=C.accent,TextColor3=C.text})
+end)
+closeBtn.MouseLeave:Connect(function()
+    tween(closeBtn,0.15,{BackgroundColor3=C.panel2,TextColor3=C.muted})
+end)
 
-local sidebar=new("Frame",{Position=UDim2.new(0,0,0,48),Size=UDim2.new(0,150,1,-48),BackgroundColor3=C.panel,BorderSizePixel=0},win)
+local sidebar=new("Frame",{
+    Position=UDim2.new(0,0,0,48), Size=UDim2.new(0,150,1,-48),
+    BackgroundColor3=C.panel, BorderSizePixel=0,
+},win)
 new("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)},sidebar)
 new("UIPadding",{PaddingTop=UDim.new(0,10),PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10)},sidebar)
+label(win,{
+    Text="RightShift  •  hide", TextSize=10, TextColor3=C.muted,
+    AnchorPoint=Vector2.new(0,1), Position=UDim2.new(0,0,1,-8),
+    Size=UDim2.new(0,150,0,14),
+})
 
-local content=new("Frame",{Position=UDim2.new(0,158,0,56),Size=UDim2.new(1,-166,1,-64),BackgroundTransparency=1},win)
+local content=new("Frame",{
+    Position=UDim2.new(0,158,0,56), Size=UDim2.new(1,-166,1,-64),
+    BackgroundTransparency=1,
+},win)
+
+local sweep=new("Frame",{
+    Position=UDim2.new(1,0,0,0), Size=UDim2.new(0,160,1,0),
+    BackgroundColor3=WHITE, BorderSizePixel=0, ZIndex=30, Visible=false,
+},win)
+new("UIGradient",{Transparency=NumberSequence.new({
+    NumberSequenceKeypoint.new(0,1),
+    NumberSequenceKeypoint.new(0.5,0.82),
+    NumberSequenceKeypoint.new(1,1),
+})},sweep)
 
 ----------------------------------------------------------------------
 -- TABS
@@ -415,159 +678,686 @@ local content=new("Frame",{Position=UDim2.new(0,158,0,56),Size=UDim2.new(1,-166,
 local tabs,current={},nil
 local function selectTab(t,silent)
     if current==t then return end
+    if not silent then sfx("select") end
     if current then
         current.page.Visible=false
+        current.shineId+=1
+        current.shine.Visible=false
         tween(current.btn,0.25,{BackgroundTransparency=1,BackgroundColor3=C.hover})
-        tween(current.bar,0.2,{Size=UDim2.new(0,3,0,0)}); tween(current.txt,0.2,{TextColor3=C.muted})
+        tween(current.bar,0.2,{Size=UDim2.new(0,3,0,0)})
+        tween(current.txt,0.2,{TextColor3=C.muted})
+        tween(current.stroke,0.25,{Transparency=1})
     end
     current=t
     tween(t.btn,0.3,{BackgroundTransparency=0.1,BackgroundColor3=C.accentDark})
-    tween(t.bar,0.4,{Size=UDim2.new(0,3,0,20)},Enum.EasingStyle.Back); tween(t.txt,0.2,{TextColor3=WHITE})
+    tween(t.bar,0.4,{Size=UDim2.new(0,3,0,20)},Enum.EasingStyle.Back)
+    tween(t.txt,0.2,{TextColor3=WHITE})
+    tween(t.stroke,0.3,{Transparency=0.3})
+    t.page.Position=UDim2.new(0,0,0,18)
     t.page.Visible=true
+    tween(t.page,0.5,{Position=UDim2.new(0,0,0,0)})
+    for i,card in ipairs(t.cards) do
+        card.GroupTransparency=1
+        task.delay((i-1)*0.07,function() tween(card,0.5,{GroupTransparency=0}) end)
+    end
+    t.shineId+=1
+    local id=t.shineId
+    t.shine.Visible=true
+    task.spawn(function()
+        while current==t and t.shineId==id do
+            t.shine.Position=UDim2.new(1.3,0,0.5,0)
+            tween(t.shine,0.9,{Position=UDim2.new(-0.3,0,0.5,0)},Enum.EasingStyle.Sine,Enum.EasingDirection.InOut)
+            task.wait(2.1)
+        end
+    end)
 end
 
 for i,tab in ipairs(CONFIG) do
-    local btn=new("TextButton",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.hover,BackgroundTransparency=1,AutoButtonColor=false,Text="",ClipsDescendants=true,LayoutOrder=i},sidebar)
-    corner(btn,8); stroke(btn,C.accent,1.5,1)
-    local bar=new("Frame",{AnchorPoint=Vector2.new(0,0.5),Position=UDim2.new(0,0,0.5,0),Size=UDim2.new(0,3,0,0),BackgroundColor3=WHITE,BorderSizePixel=0},btn)
+    local btn=new("TextButton",{
+        Size=UDim2.new(1,0,0,38), BackgroundColor3=C.hover,
+        BackgroundTransparency=1, AutoButtonColor=false, Text="",
+        ClipsDescendants=true, LayoutOrder=i,
+    },sidebar)
+    corner(btn,8)
+    local btnStroke=stroke(btn,C.accent,1.5,1)
+    local bar=new("Frame",{
+        AnchorPoint=Vector2.new(0,0.5), Position=UDim2.new(0,0,0.5,0),
+        Size=UDim2.new(0,3,0,0), BackgroundColor3=WHITE, BorderSizePixel=0,
+    },btn)
     corner(bar,2)
     label(btn,{Text=tab.icon,TextSize=16,Position=UDim2.new(0,12,0,0),Size=UDim2.new(0,22,1,0)})
-    local txt=label(btn,{Text=tab.name,Font=Enum.Font.GothamBold,TextColor3=C.muted,Position=UDim2.new(0,42,0,0),Size=UDim2.new(1,-46,1,0),TextXAlignment=Enum.TextXAlignment.Left})
+    local txt=label(btn,{
+        Text=tab.name, Font=Enum.Font.GothamBold, TextColor3=C.muted,
+        Position=UDim2.new(0,42,0,0), Size=UDim2.new(1,-46,1,0),
+        TextXAlignment=Enum.TextXAlignment.Left,
+    })
+    local shine=makeShine(btn,40,90,3); shine.Visible=false
     local page=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false},content)
-    local scroll=new("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=C.accent,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y},page)
+    local scroll=new("ScrollingFrame",{
+        Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, BorderSizePixel=0,
+        ScrollBarThickness=3, ScrollBarImageColor3=C.accent,
+        CanvasSize=UDim2.new(), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+    },page)
     local cols={}
     for _,side in ipairs({"left","right"}) do
-        local col=new("Frame",{Position=side=="left" and UDim2.new(0,0,0,0) or UDim2.new(0.5,6,0,0),Size=UDim2.new(0.5,-10,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1},scroll)
+        local col=new("Frame",{
+            Position=side=="left" and UDim2.new(0,0,0,0) or UDim2.new(0.5,6,0,0),
+            Size=UDim2.new(0.5,-10,0,0),
+            AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1,
+        },scroll)
         new("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10)},col)
         cols[side]=col
     end
+    local cards,gOrder={},0
     for _,g in ipairs(tab.groups) do
-        local card=new("CanvasGroup",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundColor3=C.panel,BorderSizePixel=0},cols[g.side])
+        gOrder+=1
+        local card=new("CanvasGroup",{
+            Size=UDim2.new(1,0,0,0),
+            AutomaticSize=Enum.AutomaticSize.Y,
+            BackgroundColor3=C.panel, BorderSizePixel=0,
+            LayoutOrder=gOrder,
+        },cols[g.side])
         corner(card,10); stroke(card,C.line,1,0.3)
         new("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)},card)
-        new("UIPadding",{PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,8),PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6)},card)
-        label(card,{Text=string.upper(g.name),Font=Enum.Font.GothamBlack,TextSize=11,TextColor3=C.accent,Position=UDim2.new(0,8,0,0),Size=UDim2.new(1,0,0,20),TextXAlignment=Enum.TextXAlignment.Left,LayoutOrder=0},card)
-        for n,ctrl in ipairs(g.controls) do builders[ctrl.type](card,ctrl,n) end
+        new("UIPadding",{
+            PaddingTop=UDim.new(0,10), PaddingBottom=UDim.new(0,8),
+            PaddingLeft=UDim.new(0,6), PaddingRight=UDim.new(0,6),
+        },card)
+        label(card,{
+            Text=string.upper(g.name), Font=Enum.Font.GothamBlack, TextSize=11,
+            TextColor3=C.accent, Position=UDim2.new(0,8,0,0),
+            Size=UDim2.new(1,0,0,20), TextXAlignment=Enum.TextXAlignment.Left,
+            LayoutOrder=0,
+        },card)
+        for n,ctrl in ipairs(g.controls) do
+            builders[ctrl.type](card,ctrl,n)
+        end
+        table.insert(cards,card)
     end
-    local t={btn=btn,bar=bar,txt=txt,page=page}
+    local t={btn=btn,bar=bar,txt=txt,page=page,cards=cards,shine=shine,stroke=btnStroke,shineId=0}
     tabs[i]=t
     btn.Activated:Connect(function() selectTab(t) end)
+    btn.MouseEnter:Connect(function()
+        if current~=t then tween(btn,0.15,{BackgroundTransparency=0.6}); sfx("hover") end
+    end)
+    btn.MouseLeave:Connect(function()
+        if current~=t then tween(btn,0.15,{BackgroundTransparency=1}) end
+    end)
 end
+
+----------------------------------------------------------------------
+-- FAB
+----------------------------------------------------------------------
+local FAB=58
+local fab=new("TextButton",{
+    Name="LogoButton", AnchorPoint=Vector2.new(0.5,0.5),
+    Position=UDim2.new(0,48,0.5,0),
+    Size=UDim2.new(0,0,0,0), BackgroundTransparency=1, Text="",
+    AutoButtonColor=false, Visible=false, ZIndex=5,
+},gui)
+local fabGlow=new("Frame",{
+    AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0.5,0),
+    Size=UDim2.new(1,18,1,18),
+    BackgroundColor3=C.accent, BackgroundTransparency=0.85, BorderSizePixel=0,
+},fab)
+corner(fabGlow,20)
+local fabBox=makeLogo(fab,15,{Size=UDim2.new(1,0,1,0)})
+spin(accentGradient(stroke(fabBox,WHITE,2)),90)
+local fabShine=makeShine(fabBox,14,90,3)
+task.spawn(function()
+    while fab.Parent do
+        tween(fabGlow,1.2,{BackgroundTransparency=0.93,Size=UDim2.new(1,26,1,26)},Enum.EasingStyle.Sine)
+        task.wait(1.2)
+        tween(fabGlow,1.2,{BackgroundTransparency=0.8,Size=UDim2.new(1,14,1,14)},Enum.EasingStyle.Sine)
+        task.wait(1.2)
+    end
+end)
+task.spawn(function()
+    while fab.Parent do
+        fabShine.Position=UDim2.new(1.3,0,0.5,0)
+        tween(fabShine,0.8,{Position=UDim2.new(-0.3,0,0.5,0)},Enum.EasingStyle.Sine,Enum.EasingDirection.InOut)
+        task.wait(3.2)
+    end
+end)
 
 ----------------------------------------------------------------------
 -- OPEN / CLOSE
 ----------------------------------------------------------------------
 local opened,ready=false,false
-closeBtn.Activated:Connect(function() opened=false; win.Visible=false end)
-UIS.InputBegan:Connect(function(i,gpe) if not gpe and i.KeyCode==Enum.KeyCode.RightShift then opened = not opened; win.Visible = opened end end)
+local function showFab()
+    fab.Visible=true; fab.Size=UDim2.new(0,0,0,0)
+    tween(fab,0.5,{Size=UDim2.new(0,FAB,0,FAB)},Enum.EasingStyle.Back)
+end
+local function hideFab()
+    tween(fab,0.2,{Size=UDim2.new(0,0,0,0)},Enum.EasingStyle.Quint,Enum.EasingDirection.In)
+    task.delay(0.22,function() if opened then fab.Visible=false end end)
+end
+local function setOpen(v)
+    if opened==v then return end
+    opened=v
+    local base=baseScale()
+    if v then
+        sfx("open"); hideFab()
+        win.Visible=true; winScale.Scale=base*0.85; win.GroupTransparency=1
+        tween(winScale,0.55,{Scale=base},Enum.EasingStyle.Back)
+        tween(win,0.35,{GroupTransparency=0})
+        sweep.Visible=true; sweep.Position=UDim2.new(1,0,0,0)
+        tween(sweep,0.9,{Position=UDim2.new(-0.25,0,0,0)},Enum.EasingStyle.Sine,Enum.EasingDirection.InOut)
+        task.delay(0.95,function() sweep.Visible=false end)
+        if current then
+            for i,card in ipairs(current.cards) do
+                card.GroupTransparency=1
+                task.delay(0.15+(i-1)*0.06,function() tween(card,0.45,{GroupTransparency=0}) end)
+            end
+        end
+    else
+        sfx("close")
+        tween(winScale,0.28,{Scale=base*0.88},Enum.EasingStyle.Quint,Enum.EasingDirection.In)
+        tween(win,0.28,{GroupTransparency=1})
+        task.delay(0.3,function()
+            if not opened then win.Visible=false; showFab() end
+        end)
+    end
+end
+closeBtn.Activated:Connect(function() setOpen(false) end)
+UIS.InputBegan:Connect(function(i,gpe)
+    if not gpe and ready and i.KeyCode==Enum.KeyCode.RightShift then
+        setOpen(not opened)
+    end
+end)
+makeDraggable(top,win,{full=false})
+makeDraggable(fab,fab,{full=true,onTap=function() if ready then setOpen(true) end end})
+selectTab(tabs[1],true)
 
 ----------------------------------------------------------------------
--- INTRO & BACKEND LOGIC
+-- INTRO
 ----------------------------------------------------------------------
-selectTab(tabs[1], true)
-win.Visible = true
-opened = true
-ready = true
+task.spawn(function()
+    local rng=Random.new()
+    local blur=new("BlurEffect",{Size=0},Lighting)
+    tween(blur,0.8,{Size=10})
+    local holder=new("CanvasGroup",{
+        AnchorPoint=Vector2.new(0.5,0.5),
+        Position=UDim2.new(0.5,0,0.5,0),
+        Size=UDim2.new(0,800,0,480),
+        BackgroundTransparency=1,
+    },gui)
+    local introScale=baseScale()
+    local hs=new("UIScale",{Scale=introScale*0.88},holder)
+    tween(hs,1.0,{Scale=introScale})
+    sfx("whoosh")
+    for i=1,10 do
+        task.delay(i*0.04,function()
+            local y,len=rng:NextInteger(30,450),rng:NextInteger(140,340)
+            local ln=new("Frame",{
+                Position=UDim2.new(0,830,0,y), Size=UDim2.new(0,len,0,2),
+                BackgroundColor3=(i%2==0) and WHITE or C.accent,
+                BackgroundTransparency=0.35, BorderSizePixel=0,
+            },holder)
+            tween(ln,0.6,{Position=UDim2.new(0,-len-30,0,y),BackgroundTransparency=1},Enum.EasingStyle.Quad,Enum.EasingDirection.In)
+            task.delay(0.65,function() ln:Destroy() end)
+        end)
+    end
+    local logoBox=makeLogo(holder,28,{
+        AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0,130),
+        Size=UDim2.new(0,10,0,10), Rotation=-200, GroupTransparency=1,
+    })
+    spin(accentGradient(stroke(logoBox,WHITE,3)),100)
+    task.wait(0.35)
+    tween(logoBox,0.75,{Size=UDim2.new(0,128,0,128),Rotation=0,GroupTransparency=0},Enum.EasingStyle.Back)
+    task.wait(0.55)
+    sfx("boom")
+    local namePill=new("Frame",{
+        AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0,268),
+        Size=UDim2.new(0, 0, 0, 86), BackgroundColor3=C.accentDark,
+        BackgroundTransparency=0.85, BorderSizePixel=0,
+    },holder)
+    corner(namePill,16)
+    local hubStroke=stroke(namePill,C.accent,2,1)
 
--- Main RoChess logic (simplified for integration)
+    local vlab=label(namePill,{
+        Text="@XevrynXen", Font=Enum.Font.Michroma, TextSize=58,
+        TextTransparency=1, AnchorPoint=Vector2.new(0.5,0.5),
+        Position=UDim2.new(0.5,0,0.5,0), Size=UDim2.new(1,0,1,0),
+    })
+    task.wait(0.15)
+    local vw = vlab.TextBounds.X
+    local pillW = vw + 80
+    sfx("whoosh")
+    tween(namePill, 0.7, {Size=UDim2.new(0, pillW, 0, 86), BackgroundTransparency=0.2}, Enum.EasingStyle.Back)
+    tween(hubStroke, 0.7, {Transparency=0.2})
+    tween(vlab, 0.7, {TextTransparency=0}, Enum.EasingStyle.Back)
+    shineText(vlab, 1.8)
+
+    local line=new("Frame",{
+        AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0,314),
+        Size=UDim2.new(0,0,0,2), BackgroundColor3=WHITE, BorderSizePixel=0,
+    },holder)
+    spin(accentGradient(line),120)
+    tween(line,0.7,{Size=UDim2.new(0,420,0,2)})
+    local sub=label(holder,{
+        Text="R O C H E S S   •   E D I T I O N",
+        Font=Enum.Font.GothamBold, TextSize=13, TextColor3=C.muted,
+        TextTransparency=1, AnchorPoint=Vector2.new(0.5,0.5),
+        Position=UDim2.new(0.5,0,0,336), Size=UDim2.new(0,420,0,20),
+    })
+    tween(sub,0.6,{TextTransparency=0.1})
+    local track=new("Frame",{
+        AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0,376),
+        Size=UDim2.new(0,280,0,4), BackgroundColor3=C.line, BorderSizePixel=0,
+    },holder)
+    corner(track,2)
+    local fill=new("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=WHITE,BorderSizePixel=0},track)
+    corner(fill,2); accentGradient(fill)
+    local status=label(holder,{
+        Text="", TextSize=11, TextColor3=C.muted,
+        AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0,398),
+        Size=UDim2.new(0,280,0,16),
+    })
+    local steps={"Loading modules...","Syncing interface...","Applying theme...","Ready"}
+    for i,s in ipairs(steps) do
+        status.Text=s
+        tween(fill,0.45,{Size=UDim2.new(i/#steps,0,1,0)},Enum.EasingStyle.Quad)
+        task.wait(0.45)
+    end
+    task.wait(0.15)
+    tween(hs,0.55,{Scale=introScale*1.3},Enum.EasingStyle.Quint,Enum.EasingDirection.In)
+    tween(holder,0.5,{GroupTransparency=1},Enum.EasingStyle.Quint,Enum.EasingDirection.In)
+    tween(blur,0.6,{Size=0})
+    task.wait(0.35)
+    ready=true
+    setOpen(true)
+    notify("@XevrynXen RoChess loaded  •  RightShift", C.purple)
+    task.wait(0.4)
+    holder:Destroy(); blur:Destroy()
+end)
+
+----------------------------------------------------------------------
+-- ROCHESS BACKEND (YUA'S LOGIC)
+----------------------------------------------------------------------
+local function invalidateAnalysis(clearSecondBest)
+    state.best = nil
+    if clearSecondBest then state.secondBest = nil end
+    state.lastAutoFen = nil; state.lastFailFen = nil
+end
+
+local function isController(value)
+    if type(value) ~= "table" then return false end
+    local board = value.board
+    if type(board) ~= "table" then return false end
+    if type(value.render) ~= "function" or type(value.onBoardMove) ~= "function" or type(value.setSession) ~= "function" then return false end
+    return type(board.setTint) == "function" and type(board.setArrow) == "function"
+end
+
+local function getUpvalueValues(fn)
+    local values = {}
+    if type(debug) == "table" and type(debug.getupvalues) == "function" then
+        local ok, result = pcall(function() return debug.getupvalues(fn) end)
+        if ok and type(result) == "table" then for _, v in pairs(result) do table.insert(values, v) end end
+    end
+    if #values == 0 and type(debug) == "table" and type(debug.getupvalue) == "function" then
+        for i = 1, 60 do
+            local ok, name, val = pcall(function() return debug.getupvalue(fn, i) end)
+            if not ok or name == nil then break end
+            table.insert(values, val ~= nil and val or name)
+        end
+    end
+    return values
+end
+
+local function findController(force)
+    if state.controller and isController(state.controller) then return state.controller end
+    if not force and os.clock() - state.lastScan < 1 then return nil end
+    state.lastScan = os.clock(); state.controller = nil; state.scanError = nil
+    if type(getgc) ~= "function" then state.scanError = "executor doesnt expose getgc"; return nil end
+    local objects = getgc(true)
+    if type(objects) ~= "table" then objects = getgc() end
+    if type(objects) ~= "table" then return nil end
+    for _, obj in pairs(objects) do if isController(obj) then state.controller = obj; return obj end end
+    for _, obj in pairs(objects) do
+        if type(obj) == "function" then
+            for _, upv in ipairs(getUpvalueValues(obj)) do
+                if isController(upv) then state.controller = upv; return upv end
+            end
+        end
+    end
+    return nil
+end
+
+local function getPosition(app)
+    if not app then return nil, nil end
+    local session = app.session
+    if type(session) ~= "table" then return nil, nil end
+    if type(session.engine) ~= "table" or type(session.engine.getFen) ~= "function" then return session, nil end
+    local fen = session.engine:getFen()
+    if type(fen) ~= "string" or fen == "" then return session, nil end
+    return session, fen, nil
+end
+
+local function currentFen(session)
+    if not session or type(session.engine) ~= "table" then return nil end
+    local fen = session.engine:getFen()
+    if type(fen) == "string" then return fen end
+    return nil
+end
+
+local function isMyTurn(session)
+    if not session then return false end
+    if type(session.isMyTurn) == "function" then
+        local r = session:isMyTurn()
+        if type(r) == "boolean" then return r end
+    end
+    local fen = currentFen(session)
+    local side = fen and string.match(fen, "^[^ ]+%s+([wb])")
+    local sideValue = side == "w" and 1 or side == "b" and -1 or nil
+    return sideValue ~= nil and session.myColor ~= nil and sideValue == session.myColor
+end
+
+local function moveBlockReason(session)
+    if not session then return true end
+    if session.over then return true end
+    if type(session.ucis) == "table" and type(session.viewPly) == "number" and session.viewPly < #session.ucis then return true end
+    if not isMyTurn(session) then return true end
+    return false
+end
+
+local function clearArrows(app)
+    app = app or state.controller
+    if not app or not app.board then return end
+    app.board:setTint("best_arrow", nil); app.board:setArrow("best_arrow", nil)
+    app.board:setTint("second_best_arrow", nil); app.board:setArrow("second_best_arrow", nil)
+end
+
+local function clearBestArrow(app)
+    app = app or state.controller
+    if not app or not app.board then return end
+    app.board:setTint("best_arrow", nil); app.board:setArrow("best_arrow", nil)
+end
+
+local function clearSecondArrow(app)
+    app = app or state.controller
+    if not app or not app.board then return end
+    app.board:setTint("second_best_arrow", nil); app.board:setArrow("second_best_arrow", nil)
+end
+
+local function isArrowIntact(app, name, fromIndex, toIndex, color)
+    local board = app and app.board
+    if not board then return false end
+    local arrows = board.arrows
+    if type(arrows) ~= "table" then return false end
+    local existing = arrows[name]
+    if type(existing) ~= "table" then return false end
+    if existing.from ~= fromIndex or existing.to ~= toIndex or existing.color ~= color then return false end
+    local parts = existing.parts
+    if type(parts) ~= "table" or #parts == 0 or parts[1] == nil then return false end
+    local p1 = parts[1]
+    if typeof(p1) == "Instance" and p1.Parent == nil then return false end
+    return true
+end
+
+local function drawArrow(app, name, uci, color)
+    if not app or not app.board then return false end
+    if type(uci) ~= "string" or #uci < 4 then return false end
+    local fromIndex = engine.algToIndex64(string.sub(uci, 1, 2))
+    local toIndex = engine.algToIndex64(string.sub(uci, 3, 4))
+    if type(fromIndex) ~= "number" or type(toIndex) ~= "number" then return false end
+    if isArrowIntact(app, name, fromIndex, toIndex, color) then return true end
+    app.board:setTint(name, fromIndex, color, 0.35)
+    app.board:setArrow(name, fromIndex, toIndex, color, 0.6)
+    return true
+end
+
 local function analyzeVortexBot(fen, depth, token)
     if not (type(bot.buildEngine) == "function" and type(bot.Search) == "table" and type(bot.Search.new) == "function") then return nil end
     local okPos, position = pcall(function() return bot.buildEngine(fen, {}) end)
-    if not okPos or type(position) ~= "table" then return nil end
+    if not okPos or type(position) ~= "table" or type(position.legalMoves) ~= "function" or type(position.moveToUci) ~= "function" then return nil end
     local okSearch, search = pcall(function() return bot.Search.new(position) end)
     if not okSearch or type(search) ~= "table" or type(search.rootScores) ~= "function" then return nil end
-    local scores = search:rootScores(math.clamp(math.floor(depth), 2, 18))
+    local deadline = os.clock() + 0.5
+    search.deadline = deadline; search.soft = deadline; search.slice = 0.004; search.sliceStart = os.clock()
+    search.cancelled = function() return state.destroyed or token ~= state.analysisToken end
+    search.multiPV = 2
+    local scores, multiScores, completedDepth, multiDepth = nil, nil, 0, 0
+    local maxDepth = math.clamp(math.floor(depth), 2, 18)
+    for d = 1, maxDepth do
+        if state.destroyed or token ~= state.analysisToken or os.clock() >= deadline then break end
+        local okS, s = pcall(function() return search:rootScores(d) end)
+        if not okS or type(s) ~= "table" or #s == 0 then break end
+        scores = s; completedDepth = d
+        if #s >= 2 then multiScores = s; multiDepth = d end
+        if search.stop then break end
+    end
+    if type(multiScores) == "table" and #multiScores >= 2 then scores = multiScores; completedDepth = multiDepth end
     if type(scores) ~= "table" or #scores == 0 then return nil end
-    table.sort(scores, function(a, b) return (tonumber(a.score) or 0) > (tonumber(b.score) or 0) end)
-    local moves = {}
-    for i = 1, math.min(2, #scores) do
-        table.insert(moves, { uci = position:moveToUci(scores[i].move), score = scores[i].score })
+    table.sort(scores, function(a, b)
+        local sa = tonumber(a and a.score) or 0; local sb = tonumber(b and b.score) or 0
+        if sa == sb then return (a and a.move or 0) < (b and b.move or 0) end
+        return sa > sb
+    end)
+    local moves, seen = {}, {}
+    for i = 1, #scores do
+        if #moves >= 2 then break end
+        local uci = position:moveToUci(scores[i].move)
+        if type(uci) == "string" and uci ~= "" and not seen[uci] then
+            seen[uci] = true
+            table.insert(moves, { uci = uci, score = tonumber(scores[i].score) or 0, depth = completedDepth, source = "vortex bot" })
+        end
+    end
+    if #moves == 0 then return moves end
+    return moves
+end
+
+local function analyzeChessApi(fen, token)
+    local requestFn = request or http_request or (typeof(syn) == "table" and syn.request) or (typeof(http) == "table" and http.request)
+    if type(requestFn) ~= "function" then return nil end
+    local body = HttpService:JSONEncode({ fen = fen, depth = math.clamp(math.floor(state.depth), 1, 18), maxThinkingTime = 100, variants = 2 })
+    local response
+    for attempt = 1, 3 do
+        if state.destroyed or token ~= state.analysisToken then return nil end
+        local ok, resp = pcall(function() return requestFn({ Url = "https://chess-api.com/v1", Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body, Timeout = 5 }) end)
+        if ok and type(resp) == "table" and resp.StatusCode == 200 then response = resp; break end
+        if attempt < 3 then task.wait(0.5) end
+    end
+    if not response then return nil end
+    local okDec, data = pcall(function() return HttpService:JSONDecode(response.Body) end)
+    if not okDec or type(data) ~= "table" then return nil end
+    if type(data.move) ~= "string" or not string.match(data.move, "^[a-h][1-8][a-h][1-8][qrbn]?$") then return nil end
+    local moves = { { uci = data.move, score = tonumber(data.score) or 0, depth = tonumber(data.depth) or 0, source = "chess api" } }
+    if type(data.moveAlternatives) == "string" then
+        for alt in string.gmatch(data.moveAlternatives, "[^,]+") do
+            alt = string.gsub(alt, "^%s+", ""); alt = string.gsub(alt, "%s+$", "")
+            if alt ~= data.move and string.match(alt, "^[a-h][1-8][a-h][1-8][qrbn]?$") then
+                table.insert(moves, { uci = alt, score = 0, depth = 0, source = "chess api" })
+                if #moves >= 2 then break end
+            end
+        end
     end
     return moves
 end
 
--- VE Chess Logic
-local originalThink = VortexBot.think
-VortexBot.think = function(startFen, moves, persona, opts)
-    local uci, info = originalThink(startFen, moves, persona, opts)
-    pcall(function()
-        local session = App.session
-        if session and session.kind == "bot" and session.bot and type(persona) == "table" and persona.id == session.bot and type(uci) == "string" then
-            VE.state.decision = { session = session, ply = #session.ucis, uci = uci, info = info, at = os.clock() }
-        end
+local function analyzePosition(fen, token)
+    local useChessApiFirst = state.model == "chess api"
+    local first, firstErr = useChessApiFirst and analyzeChessApi(fen, token) or analyzeVortexBot(fen, state.depth, token)
+    if first and #first >= 1 then return first end
+    local second, secondErr = useChessApiFirst and analyzeVortexBot(fen, state.depth, token) or analyzeChessApi(fen, token)
+    if second and #second >= 1 then return second end
+    return nil, secondErr or firstErr
+end
+
+local function sendUciMove(app, session, fen, uci)
+    if state.destroyed then return false end
+    if not app or app.session ~= session then return false end
+    if currentFen(session) ~= fen then return false end
+    if moveBlockReason(session) then return false end
+    if type(uci) ~= "string" or not string.match(uci, "^[a-h][1-8][a-h][1-8][qrbn]?$") then return false end
+    local fromIndex = engine.algToIndex64(string.sub(uci, 1, 2))
+    local toIndex = engine.algToIndex64(string.sub(uci, 3, 4))
+    local promoLetter = string.sub(uci, 5, 5)
+    local promoType = promotion_types[promoLetter]
+    if type(fromIndex) ~= "number" or type(toIndex) ~= "number" then return false end
+    local moveHandler = app.onBoardMove
+    if type(moveHandler) ~= "function" then return false end
+    local ok, response = pcall(function() return moveHandler(fromIndex, toIndex, promoType, false) end)
+    if not ok or response == false then return false end
+    return true
+end
+
+local function runAnalysis(app, session, fen, isForAutoplay)
+    if state.destroyed or state.analysisBusy then return false end
+    state.analysisBusy = true; state.analysisStartedAt = os.clock(); state.analysisToken += 1
+    local token = state.analysisToken
+    task.spawn(function()
+        local ok, moves = pcall(function() return analyzePosition(fen, token) end)
+        if token ~= state.analysisToken or state.destroyed then state.analysisBusy = false; return end
+        state.analysisBusy = false
+        if not ok then state.lastFailFen = fen; state.lastAutoFen = fen; return end
+        pcall(function()
+            if not moves or #moves == 0 then
+                state.best = nil; state.secondBest = nil; state.lastFailFen = fen; state.lastAutoFen = fen; clearArrows(app); return
+            end
+            if not app or app.session ~= session or currentFen(session) ~= fen then return end
+            state.lastFailFen = nil; state.best = { session = session, fen = fen, uci = moves[1].uci }
+            if moves[2] then state.secondBest = { session = session, fen = fen, uci = moves[2].uci }
+            else state.secondBest = nil; clearSecondArrow(app) end
+            local myTurn = isMyTurn(session)
+            if isForAutoplay and state.autoPlay and myTurn then
+                if state.showBest then drawArrow(app, "best_arrow", state.best.uci, highlight_green) end
+                if state.showSecond and state.secondBest then drawArrow(app, "second_best_arrow", state.secondBest.uci, highlight_blue) end
+                task.wait(state.playDelay)
+                if state.destroyed or token ~= state.analysisToken then return end
+                if not state.autoPlay then return end
+                if not app or app.session ~= session or currentFen(session) ~= fen then return end
+                local chosen
+                if state.autoPlayChoice == "second best" and state.secondBest then chosen = state.secondBest.uci
+                else chosen = state.best.uci end
+                sendUciMove(app, session, fen, chosen)
+                state.lastAutoFen = fen
+            elseif myTurn then
+                if state.showBest then drawArrow(app, "best_arrow", state.best.uci, highlight_green) end
+                if state.showSecond and state.secondBest then drawArrow(app, "second_best_arrow", state.secondBest.uci, highlight_blue) end
+                state.lastAutoFen = fen
+            end
+        end)
     end)
-    return uci, info
+    return true
 end
 
-local function formatClock(ms)
-    ms = math.max(0, tonumber(ms) or 0)
-    local total = math.floor(ms / 1000)
-    return string.format("%d:%02d", math.floor(total / 60), total % 60)
-end
-
-local function updateVE()
-    local session = App.session
-    if not session then return end
-    
-    -- Enemy View
-    if VE.config.EnemyView then
-        local ply = #session.ucis
-        local enemyWhite = session.myColor ~= 1
-        local enemySide = enemyWhite and session.white or session.black
-        local enemyName = (enemySide and (enemySide.display or enemySide.name)) or (enemyWhite and "White" or "Black")
-        
-        local clock = 0
-        pcall(function() clock = session:clockFor(enemyWhite and 1 or -1, workspace:GetServerTimeNow()) end)
-        
-        local lastLine = "no moves yet"
-        if ply > 0 then
-            lastLine = session.sans[ply] or "?"
+local function startWorker()
+    if state.workerRunning or state.destroyed then return end
+    state.workerRunning = true
+    task.spawn(function()
+        while not state.destroyed and (state.autoPlay or state.showBest or state.showSecond) do
+            pcall(function()
+                if state.analysisBusy and os.clock() - state.analysisStartedAt > 20 then
+                    state.analysisBusy = false; state.analysisToken += 1
+                end
+                local app = findController(false)
+                if app then
+                    local session, fen = getPosition(app)
+                    if session then
+                        if state.currentSession ~= session then
+                            state.currentSession = session; state.lastAutoFen = nil; state.lastFailFen = nil; state.best = nil; state.secondBest = nil; clearArrows(app)
+                        end
+                        if state.showBest then
+                            if state.best and state.best.session == session and state.best.fen == fen then drawArrow(app, "best_arrow", state.best.uci, highlight_green)
+                            else clearBestArrow(app) end
+                        end
+                        if state.showSecond then
+                            if state.secondBest and state.secondBest.session == session and state.secondBest.fen == fen then drawArrow(app, "second_best_arrow", state.secondBest.uci, highlight_blue)
+                            else clearSecondArrow(app) end
+                        end
+                        if fen then
+                            local myTurn = isMyTurn(session)
+                            local hasCached = state.best and state.best.session == session and state.best.fen == fen
+                            local canPlay = state.autoPlay and myTurn and not moveBlockReason(session)
+                            local needsPlay = canPlay and state.lastAutoFen ~= fen and state.lastFailFen ~= fen
+                            local canShowArrow = (state.showBest or state.showSecond) and myTurn and not state.autoPlay
+                            local needsAnalyzeForArrow = canShowArrow and not hasCached and state.lastFailFen ~= fen
+                            if not state.analysisBusy and (needsPlay or needsAnalyzeForArrow) then
+                                if needsPlay then state.lastAutoFen = fen; runAnalysis(app, session, fen, true)
+                                else runAnalysis(app, session, fen, false) end
+                            end
+                        end
+                    end
+                end
+            end)
+            task.wait(0.05)
         end
-        
-        local planLine = "waiting for their turn"
-        local decision = VE.state.decision
-        if decision and decision.session == session and decision.ply == ply and decision.uci then
-            planLine = "wants " .. decision.uci
-        end
-        
-        VE.state.enemyLine1 = string.format("%s (%s)", enemyName, formatClock(clock))
-        VE.state.enemyLine2 = "last move: " .. lastLine
-        VE.state.enemyLine3 = planLine
-    else
-        VE.state.enemyLine1 = "Enemy View Off"
-        VE.state.enemyLine2 = ""
-        VE.state.enemyLine3 = ""
-    end
-    
-    -- Update UI Text
-    if textRefs["EnemyLine1"] then
-        textRefs["EnemyLine1"].Text = VE.state.enemyLine1
-        textRefs["EnemyLine2"].Text = VE.state.enemyLine2
-        textRefs["EnemyLine3"].Text = VE.state.enemyLine3
-        textRefs["VE_Status"].Text = session:isMyTurn() and "Status: Your Turn" or "Status: Their Turn"
-    end
+        state.workerRunning = false
+        if not state.destroyed and (state.autoPlay or state.showBest or state.showSecond) then startWorker() end
+    end)
 end
 
--- Main Loop
-RunService.RenderStepped:Connect(function()
-    pcall(updateVE)
-end)
+----------------------------------------------------------------------
+-- FLAG BRIDGE
+----------------------------------------------------------------------
+local pendingConfigName = ""
+local pendingConfigLoad = state.currentConfig
 
--- Bridge Flags
 local HANDLERS = {
-    AutoPlay = function(v) state.autoPlay = v end,
-    ShowBest = function(v) state.showBest = v end,
-    PlayDelay = function(v) state.playDelay = v end,
-    Depth = function(v) state.depth = math.floor(v) end,
-    VE_EnemyView = function(v) VE.config.EnemyView = v end,
-    VE_Humanise = function(v) VE.config.Humanise = v end,
-    VE_MoveDelay = function(v) VE.config.MoveDelay = v end,
-    VE_ThinkTime = function(v) VE.config.ThinkTime = v end,
-    SaveConfig = function() notify("Settings saved", C.green) end
+    AutoPlay = function(v) 
+        state.autoPlay = v; 
+        if v then state.lastAutoFen = nil; startWorker() end 
+        notify("Auto Move  "..(v and "ON" or "OFF"), v and C.green or C.accent) 
+    end,
+    ShowBest = function(v) 
+        state.showBest = v; 
+        if not v then clearBestArrow() end 
+        if v then startWorker() end 
+        notify("Best Arrow  "..(v and "ON" or "OFF"), v and C.green or C.accent) 
+    end,
+    ShowSecond = function(v) 
+        state.showSecond = v; 
+        if not v then clearSecondArrow() end 
+        if v then startWorker() end 
+        notify("2nd Arrow  "..(v and "ON" or "OFF"), v and C.green or C.accent) 
+    end,
+    AutoPlayChoice = function(v) state.autoPlayChoice = v; state.lastAutoFen = nil end,
+    PlayDelay = function(v) state.playDelay = math.clamp(tonumber(v) or 0.35, 0.1, 2) end,
+    Depth = function(v) state.depth = math.clamp(math.floor(tonumber(v) or 12), 4, 24); invalidateAnalysis(true); clearArrows() end,
+    Model = function(v) state.model = v; invalidateAnalysis(true); clearArrows() end,
+    AutoloadConfig = function(v) state.autoloadConfig = v; saveMeta() end,
+    
+    ConfigName = function(v) pendingConfigName = v end,
+    CreateConfig = function()
+        if pendingConfigName == "" then notify("Enter a config name first", C.red) return end
+        if saveConfig(pendingConfigName, getCurrentConfigData()) then
+            state.currentConfig = pendingConfigName; saveMeta()
+            notify("Config "..pendingConfigName.." created!", C.green)
+        end
+    end,
+    OverwriteConfig = function()
+        if state.currentConfig == "" then notify("No config loaded", C.red) return end
+        if saveConfig(state.currentConfig, getCurrentConfigData()) then notify("Overwritten "..state.currentConfig, C.green) end
+    end,
+    DeleteConfig = function()
+        if state.currentConfig == "" then notify("No config loaded", C.red) return end
+        deleteConfig(state.currentConfig)
+        local old = state.currentConfig; state.currentConfig = ""; saveMeta()
+        notify("Deleted "..old, C.accent)
+    end,
+    ChooseConfig = function(v)
+        local data = loadConfig(v)
+        if data then
+            applyConfigData(data)
+            invalidateAnalysis(true); clearArrows()
+            state.currentConfig = v; saveMeta()
+            notify("Loaded "..v, C.green)
+            if state.autoPlay or state.showBest or state.showSecond then startWorker() end
+        end
+    end,
 }
+
 Changed.Event:Connect(function(id, value)
-    if HANDLERS[id] then pcall(HANDLERS[id], value) end
+    local h = HANDLERS[id]
+    if h then pcall(h, value) end
 end)
 
-notify("@XevrynXen RoChess + VE loaded", C.purple)
-print("[@XevrynXen RoChess + VE] loaded.")
+if state.autoPlay or state.showBest or state.showSecond then startWorker() end
+
+task.spawn(function()
+    task.wait(1)
+    notify("@XevrynXen RoChess ready", C.purple)
+end)
+
+print("[@XevrynXen RoChess] loaded.")
